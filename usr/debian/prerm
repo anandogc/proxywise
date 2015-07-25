@@ -1,0 +1,13 @@
+#!/bin/sh
+
+if which systemctl >/dev/null >/dev/null 2>&1 ; then
+	systemctl disable proxywise || true
+	systemctl stop proxywise || true
+
+elif which service >/dev/null 2>&1 ; then
+	service proxywise stop || true
+fi
+
+if which update-icon-caches >/dev/null 2>&1 ; then
+	update-icon-caches /usr/share/icons/ubuntu-mono-light /usr/share/icons/ubuntu-mono-dark || true
+fi

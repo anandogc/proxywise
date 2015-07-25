@@ -1,0 +1,16 @@
+Source: proxywise
+Section: net
+Priority: optional
+Maintainer: Anando Gopal Chatterjee <anandogc@gmail.com>
+Build-Depends: debhelper (>= 8.0.0)
+Standards-Version: 3.9.5
+Homepage: http://anandogc.blogspot.in/2015/07/proxywise.html
+#Vcs-Git: git://git.debian.org/collab-maint/proxywise.git
+#Vcs-Browser: http://git.debian.org/?p=collab-maint/proxywise.git;a=summary
+
+Package: proxywise
+Architecture: any
+Depends: redsocks (>=0.4), python, python-wxtools, python-gnomekeyring
+Description: Applies a proxy system wide
+ A set of proxies can be configured and all outgoing traffic can be redirected through them. With this you can keep all your applications with no-proxy setting still use a proxy of your choice. This becomes helpful as many software are not proxy aware and only have no-proxy setting.
+

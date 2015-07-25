@@ -1,0 +1,9 @@
+[Unit]
+Description=Proxywise
+
+[Service]
+ExecStart=proxywise-service
+
+[Install]
+WantedBy=multi-user.target
+

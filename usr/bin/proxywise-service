@@ -1,0 +1,247 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+
+# Copyright 2015 Anando Gopal Chatterjee <anandogc@gmail.com>
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+from string import upper
+
+import os, sys, signal, atexit, subprocess
+
+import struct, socket, stat
+import json, pwd, cPickle, tempfile
+
+SO_PEERCRED = 17  # Pulled from /usr/include/asm-generic/socket.h
+                  # http://stackoverflow.com/a/7982749
+
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+
+try:
+    s.bind('/run/proxywise.sock')
+    st = os.stat('/run/proxywise.sock')
+    os.chmod('/run/proxywise.sock', st.st_mode | stat.S_IWOTH)
+except socket.error , msg:
+    print 'Bind failed. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
+    sys.exit()
+
+tf = tempfile.NamedTemporaryFile(mode='w', delete=False)
+red_conf_file_name = tf.name
+# file = open(, 'w')
+
+s.listen(10)
+
+active_profile = None
+
+def clean_socket(sig, func=None):
+    reset()
+    s.close()
+    os.remove('/run/proxywise.sock')
+    killall = subprocess.Popen(['killall', 'redsocks'])
+
+signal.signal(signal.SIGTERM, clean_socket)
+signal.signal(signal.SIGINT, clean_socket)
+#atexit.register(clean_socket, 0)
+
+
+def apply(profile_id, ip, port, auth_required, login, password, ignore_host_list):
+    global active_profile
+    tf = tempfile.NamedTemporaryFile(mode='w', delete=False)
+    #print redsocks_config_file.name
+    redsocks_config_file_name = tf.name
+    redsocks_config_file = open(redsocks_config_file_name, 'w')
+
+    redsocks_config_file.write(
+        '\
+        base {\n\
+            log_debug = off;\n\
+            log_info = off;\n\
+            log = "syslog:daemon";\n\
+            daemon = on;\n\
+            user = redsocks;\n\
+            group = redsocks;\n\
+            redirector = iptables;\n\
+        }\n')
+
+    if auth_required:
+        redsocks_config_file.write(
+            '\
+            redsocks {\n\
+                local_ip = 127.0.0.1;\n\
+                local_port = 5123;\n\
+                type = http-relay;\n\
+                ip = %s;\n\
+                port = %d;\n\
+                login = \"%s";\n\
+                password = \"%s\";\n\
+            }\n' % (ip, port, login, password))
+
+        redsocks_config_file.write(
+            '\
+            redsocks {\n\
+                local_ip = 127.0.0.1;\n\
+                local_port = 5124;\n\
+                type = http-connect;\n\
+                ip = %s;\n\
+                port = %d;\n\
+                login = \"%s";\n\
+                password = \"%s\";\n\
+            }\n' % (ip, port, login, password))
+
+    else:
+        redsocks_config_file.write(
+            '\
+            redsocks {\n\
+                local_ip = 127.0.0.1;\n\
+                local_port = 5123;\n\
+                type = http-relay;\n\
+                ip = %s;\n\
+                port = %d;\n\
+            }\n' % (ip, port))
+
+        redsocks_config_file.write(
+            '\
+            redsocks {\n\
+                local_ip = 127.0.0.1;\n\
+                local_port = 5124;\n\
+                type = http-connect;\n\
+                ip = %s;\n\
+                port = %d;\n\
+            }\n' % (ip, port))
+
+    redsocks_config_file.close()
+
+    tf = tempfile.NamedTemporaryFile()
+    redsocks_pid_file_name = tf.name
+    tf.close()
+
+    for i in range(0, 10):
+        reset()
+        redsocks = subprocess.Popen(['redsocks', '-c', redsocks_config_file_name, '-p', redsocks_pid_file_name])
+        ret_code = redsocks.wait()
+
+        if ret_code != 0:
+            subprocess.Popen(['killall', 'redsocks']).wait()
+            continue
+
+        if not (os.path.isfile(redsocks_pid_file_name) and os.stat(redsocks_pid_file_name) != 0):
+            subprocess.Popen(['killall', 'redsocks']).wait()
+            continue
+
+        redsocks_pid_file = open(redsocks_pid_file_name, 'r')
+        pid = redsocks_pid_file.readline()
+        os.remove(redsocks_pid_file_name)
+
+        if (len(pid.split()) != 1):
+            subprocess.Popen(['killall', 'redsocks']).wait()
+            continue
+
+        active_profile = [profile_id, pid.split()[0]]
+
+        os.remove(redsocks_config_file_name)
+        break
+
+    if (i == 9):
+        print "i is 9"
+        return 1
+
+    #Set IPTables
+    iptables_rule_list = [
+        ['iptables', '-t', 'nat', '-N', 'PROXYWISE'],
+        ['iptables', '-t', 'nat', '-I', 'PROXYWISE', '-o', 'lo', '-j', 'RETURN']
+    ]
+
+    for host in ignore_host_list:
+        iptables_rule_list += [
+            ['iptables', '-t', 'nat', '-A', 'PROXYWISE', '-d', host.encode('ascii', 'ignore'), '-j', 'RETURN'],
+        ]
+
+    iptables_rule_list += [
+        ['iptables', '-t', 'nat', '-A', 'PROXYWISE', '-p', 'tcp', '--dport', '80', '-j', 'DNAT', '--to-destination', '127.0.0.1:5123'],
+        ['iptables', '-t', 'nat', '-A', 'PROXYWISE', '-p', 'tcp', '-j', 'DNAT', '--to-destination', '127.0.0.1:5124'],
+        ['iptables', '-t', 'nat', '-A', 'PROXYWISE', '-p', 'udp', '-j', 'DNAT', '--to-destination', '127.0.0.1:5124'],
+        ['iptables', '-t', 'nat', '-A', 'PROXYWISE', '-p', 'icmp', '-j', 'DNAT', '--to-destination', '127.0.0.1:5124'],
+        #['iptables', '-t', 'nat', '-A', 'PROXYWISE', '-p', 'tcp', '-m', 'tcp', '--dport', '443', '-j', 'DNAT', '--to-destination', '127.0.0.1:5124'],
+        ['iptables', '-t', 'nat', '-A', 'OUTPUT', '-p', 'tcp', '-j', 'PROXYWISE'],
+        ['iptables', '-t', 'nat', '-A', 'OUTPUT', '-p', 'udp', '-j', 'PROXYWISE'],
+        ['iptables', '-t', 'nat', '-A', 'OUTPUT', '-p', 'icmp', '-j', 'PROXYWISE']
+    ]
+
+    for rule in iptables_rule_list:
+        #print rule
+        iptable = subprocess.Popen(rule)
+        ret_code = iptable.wait()
+        #if ret_code != 0:
+        #   print "exit"
+        #   return ret_code
+    return 0
+
+
+def reset():
+    global active_profile
+    iptables_rule_list = [
+        ['iptables', '-t', 'nat', '-D', 'OUTPUT', '-p', 'tcp', '-j', 'PROXYWISE'],
+        ['iptables', '-t', 'nat', '-D', 'OUTPUT', '-p', 'udp', '-j', 'PROXYWISE'],
+        ['iptables', '-t', 'nat', '-D', 'OUTPUT', '-p', 'icmp', '-j', 'PROXYWISE'],
+        ['iptables', '-t', 'nat', '-F', 'PROXYWISE'],
+        ['iptables', '-t', 'nat', '-X', 'PROXYWISE']
+    ]
+
+    for rule in iptables_rule_list:
+            #print rule
+            iptable = subprocess.Popen(rule)
+            ret_code = iptable.wait()
+
+    if active_profile is not None and len(active_profile) == 2:
+            print active_profile
+            subprocess.Popen(['kill', active_profile[1]]).wait()
+            active_profile = None
+
+
+#now keep talking with the client
+while True:
+    #wait to accept a connection - blocking call
+    conn, addr = s.accept()
+    creds = conn.getsockopt(socket.SOL_SOCKET, SO_PEERCRED, struct.calcsize('3i'))
+    pid, uid, gid = struct.unpack('3i', creds)
+
+    recv = conn.recv(1024)
+
+    try:
+        data = json.loads(recv)
+    except ValueError:
+        continue
+
+    #retcode=0
+    if data[0] == 'get_active_profile':
+        profile_id = -1
+        if active_profile is not None:
+            profile_id = active_profile[0]
+
+        conn.sendall(str(profile_id))
+
+    if data[0] == 'apply':
+        profile_id = data[1]['profile_id']
+        ip = data[1]['ip']
+        port = data[1]['port']
+        auth_required = data[1]['auth_required']
+        login = data[1]['login']
+        password = data[1]['password']
+        ignore_host_list = data[1]['ignore-host']
+
+        error = apply(profile_id, ip, port, auth_required, login, password, ignore_host_list)
+        conn.sendall(str(error))
+
+    if data[0] == 'reset':
+        reset()

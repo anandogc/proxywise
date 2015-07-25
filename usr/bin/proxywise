@@ -1,0 +1,244 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+
+# Copyright 2015 Anando Gopal Chatterjee <anandogc@gmail.com>
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+
+import sys
+import json, socket
+import operator
+import getpass
+
+from proxywisedb import ProxywiseDB
+
+
+import argparse
+
+
+class Proxywise:
+    def __init__(self):
+            self.selected_profile = None
+            self.db = ProxywiseDB()
+
+
+    def InitProfiles(self):
+            self.profiles = {}
+            profile_id_list = self.db.GetProfileIdList()
+
+            for profile_id in profile_id_list:
+                    display_name = self.db.GetDisplayName(profile_id)
+
+                    self.profiles[display_name] = {
+                                                    'id': profile_id,
+                                                    'attributes': self.db.GetAttributes(profile_id)
+                                            }
+    def GetProfileNameList(self):
+        profile_list = sorted(self.profiles.items(), key=lambda t: t[1]['attributes']['index'])
+
+        display_name_list = []
+        for profile in profile_list:
+            display_name_list.append(profile[0])
+
+        return display_name_list
+
+    def get_active_profile(self):
+        SO_PASSCRED = 16  # Pulled from /usr/include/asm-generic/socket.h
+
+        #create an UNIX, STREAMing socket
+        try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        except socket.error:
+            print 'Failed to create socket'
+            return None
+
+        s.setsockopt(socket.SOL_SOCKET, SO_PASSCRED, 1)
+
+
+        #Connect to central server
+        try:
+                s.connect('/run/proxywise.sock')
+        except:
+            print "Unable to connect with proxywise service."
+            return None
+
+        #Create message
+        message = json.dumps(['get_active_profile'])
+
+
+        profile_id = None;
+        #Send message to central cerver
+        try :
+                s.sendall(message)
+                profile_id=int(s.recv(1024))
+        except socket.error:  #Send failed
+            print 'Sending profile information to proxywise service failed.'
+            return None
+
+        s.close()
+
+        if profile_id<0:
+            profile_id=None
+
+        return profile_id
+
+
+    def activate_profile(self, profile_id):
+
+        attr = self.db.GetAttributes(profile_id)
+
+        if not attr['server'] or not attr['port']:
+            print "Server address or Port not present in configuration."
+            self.selected_profile = None
+            notification = Notify.Notification.new('Proxywise', 'Server address or Port not present in configuration.', 'proxywise-error')
+            notification.show()
+            return 3
+            
+        password = self.db.GetSecret(profile_id)
+
+        if attr['auth_required'] and not attr['user']:
+            attr['user'] = raw_input('Username: ')
+        
+        if attr['auth_required'] and not password:
+            password = getpass.getpass()
+
+
+        if attr['auth_required'] and (not attr['user'] or not password):
+            raw_input("Invalid credentials")
+            return 0
+
+        SO_PASSCRED = 16  # Pulled from /usr/include/asm-generic/socket.h
+
+        #create an UNIX, STREAMing socket
+        try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        except socket.error:
+            print 'Failed to create socket'
+            return 1
+
+        s.setsockopt(socket.SOL_SOCKET, SO_PASSCRED, 1)
+
+
+        #Connect to central server
+        try:
+                s.connect('/run/proxywise.sock')
+        except:
+            print "Unable to connect with proxywise service."
+            return 2
+
+        #Create message
+        message = json.dumps(['apply', {
+                                    'profile_id': profile_id,
+                                    'ip': attr['server'],
+                                    'port': attr['port'],
+                                    'auth_required': attr['auth_required'],
+                                    'login': attr['user'],
+                                    'password': password,
+                                    'ignore-host': self.db.GetIgnoreHostList()
+                                }
+                            ])
+
+        #Send message to central cerver
+        try :
+                s.sendall(message)
+                error=int(s.recv(1024))
+        except socket.error:  #Send failed
+            print 'Sending profile information to proxywise service failed.'
+            return 3
+
+        s.close()
+
+        if (error==0):
+            self.selected_profile = profile_id
+            self.db.SetActiveProfile(profile_id)
+            print attr['name'], "activated."
+        else:
+            print 'Proxywise service failed to apply given proxy'
+            notification = Notify.Notification.new('Proxywise', 'Proxywise service failed to apply given proxy', 'proxywise-error')
+            return 1
+
+        return 0
+
+
+    def disable_profile(self):
+        SO_PASSCRED = 16  # Pulled from /usr/include/asm-generic/socket.h
+
+        #create an UNIX, STREAMing socket
+        try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        except socket.error:
+            print 'Failed to create socket'
+
+        s.setsockopt(socket.SOL_SOCKET, SO_PASSCRED, 1)
+
+
+        #Connect to central server
+        try:
+                s.connect('/run/proxywise.sock')
+        except:
+            print "Unable to connect with proxywise service."
+
+
+        #Create message
+        message = json.dumps(['reset'])
+
+        #Send message to central cerver
+        try :
+                s.sendall(message)
+                self.selected_profile = None
+                self.db.SetActiveProfile(None)
+                print "Active profile disabled."
+        except socket.error:
+            print 'Sending reset proxywise service failed.'
+        s.close()
+
+
+if __name__ == "__main__":
+    proxywise = Proxywise()
+    proxywise.InitProfiles()
+
+    display_name_list = proxywise.GetProfileNameList()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('profile_name', nargs='?', choices=display_name_list , help='profile to be activated')
+    parser.add_argument('-l', '--list', action='store_false', help='list available profiles')
+    parser.add_argument('-a', '--activate', action='store_false', help='activate last used proxy')
+    parser.add_argument('-n', '--no-proxy', action='store_false', help='disable active profile')
+
+    if len(sys.argv)>1:
+        args=parser.parse_args(sys.argv[1:])
+
+        if not args.list:
+            for profile_name in display_name_list:
+                print profile_name,
+
+        elif not args.activate:
+            if proxywise.db.GetActiveProfile() is not None:   # Proxy was activated in earlier booting
+                proxywise.activate_profile(proxywise.db.GetActiveProfile())
+            else:
+                print "Last active profile not found."
+
+        elif not args.no_proxy:
+            if proxywise.get_active_profile() is not None:
+                proxywise.disable_profile()
+            else:
+                print "No active profile."
+
+        elif args.profile_name:
+            proxywise.activate_profile(proxywise.profiles[args.profile_name]['id'])
+    else:
+        if proxywise.db.GetActiveProfile() is not None:
+            print proxywise.db.GetDisplayName(proxywise.db.GetActiveProfile()), "is active."
+        else:
+            print "No profiles are active."

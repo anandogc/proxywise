@@ -1,0 +1,476 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+
+# Copyright 2015 Anando Gopal Chatterjee <anandogc@gmail.com>
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+
+import wx, glib, collections
+import gnomekeyring as gk
+from proxywisedb import ProxywiseDB
+
+
+ID_DISPLAY_NAME = wx.NewId()
+ID_SERVER = wx.NewId()
+ID_PORT = wx.NewId()
+ID_AUTH_REQD = wx.NewId()
+ID_USER = wx.NewId()
+ID_SECRET = wx.NewId()
+
+class Profiles(wx.Panel):
+    def __init__(self, parent):
+        wx.Panel.__init__(self, parent)
+        self.GetSettingsFromKeyring()
+        self.InitUI()
+
+    def GetSettingsFromKeyring(self):
+
+        self.keyring_name = 'proxywise'
+        keyring_password = 'proxywise'
+
+        glib.set_application_name(self.keyring_name)
+
+        self.profiles = collections.OrderedDict()
+
+        #Init Keyring
+        if not self.keyring_name in gk.list_keyring_names_sync():
+            gk.create_sync(self.keyring_name, keyring_password)
+
+        gk.unlock_sync(self.keyring_name, keyring_password)
+
+        profile_id_list = gk.list_item_ids_sync(self.keyring_name)
+
+
+        for profile_id in profile_id_list:
+
+            profile_info = gk.item_get_info_sync(self.keyring_name, profile_id)
+            display_name = profile_info.get_display_name()
+
+            self.profiles[display_name] = {
+                            'id': profile_id,
+                            'secret': profile_info.get_secret()
+                        }
+
+            profile_attr = gk.item_get_attributes_sync(self.keyring_name, profile_id)
+
+            self.profiles[display_name]['attributes'] = {}
+            for attr in profile_attr.items():
+                if attr[0] != 'xdg:schema':
+                    self.profiles[display_name]['attributes'][attr[0]] = attr[1]
+
+    def InitUI(self):
+        hbox_main = wx.BoxSizer(wx.HORIZONTAL)
+
+        #Profile List
+        self.profile_list_box = wx.BoxSizer(wx.VERTICAL)
+        self.listbox = wx.ListBox(self, -1)
+        self.profile_list_box.Add(self.listbox, 1, wx.EXPAND | wx.ALL, 0)
+
+        #Buttons below profile list
+        self.profile_list_add_remove_box = wx.BoxSizer(wx.HORIZONTAL)
+
+        add_profile = wx.Button(self, label=u'+', size=(25, 25))
+        del_profile = wx.Button(self, label=u'-', size=(25, 25))
+        move_up = wx.Button(self, label=u'⇡', size=(25, 25))
+        move_down = wx.Button(self, label=u'⇣', size=(25, 25))
+
+        self.profile_list_add_remove_box.Add(add_profile, 0)
+        self.profile_list_add_remove_box.Add(del_profile, 0)
+        self.profile_list_add_remove_box.Add(move_up, 0)
+        self.profile_list_add_remove_box.Add(move_down, 0)
+
+        add_profile.Bind(wx.EVT_BUTTON, self.NewItem)
+        del_profile.Bind(wx.EVT_BUTTON, self.OnDelete)
+        move_up.Bind(wx.EVT_BUTTON, self.OnMoveUp)
+        move_down.Bind(wx.EVT_BUTTON, self.OnMoveDown)
+        self.listbox.Bind(wx.EVT_LISTBOX, self.OnProfileSelect)
+
+        self.profile_list_box.Add(self.profile_list_add_remove_box, 0)
+
+        hbox_main.Add(self.profile_list_box, 1, wx.EXPAND | wx.ALL, 20)
+
+
+        #Details of proxy
+        fgs = wx.FlexGridSizer(6, 2, 9, 25)
+
+
+        profile_name_label = wx.StaticText(self, label='Profile name: ')
+        self.profile_name_value = wx.TextCtrl(self, ID_DISPLAY_NAME)
+
+
+        proxy_server_label = wx.StaticText(self, label='HTTP Proxy: ')
+        self.proxy_server_value = wx.TextCtrl(self, ID_SERVER)
+
+
+        proxy_port_label = wx.StaticText(self, label='Port: ')
+        self.proxy_port_value = wx.TextCtrl(self, ID_PORT)
+
+        proxy_authentication_dummy_label = wx.StaticText(self, label='')
+        self.proxy_auth_required_chkbox = wx.CheckBox(self, ID_AUTH_REQD, label='Proxy server requires authentication')
+
+        proxy_username_label = wx.StaticText(self, label='Username: ')
+        self.proxy_username_value =  wx.TextCtrl(self, ID_USER)
+
+        proxy_password_label = wx.StaticText(self, label='Password: ')
+        self.proxy_password_value =  wx.TextCtrl(self, ID_SECRET, style=wx.TE_PASSWORD)
+        # self.proxy_password_show_checkbox =  wx.CheckBox(self, label="Show Password")
+
+
+        fgs.AddMany(
+            [(profile_name_label),  (self.profile_name_value, 1, wx.EXPAND),
+             (proxy_server_label), (self.proxy_server_value, 1, wx.EXPAND),
+             (proxy_port_label), (self.proxy_port_value, 1, wx.EXPAND),
+             (proxy_authentication_dummy_label), (self.proxy_auth_required_chkbox, 1, wx.EXPAND),
+             (proxy_username_label), (self.proxy_username_value, 1, wx.EXPAND),
+             (proxy_password_label), (self.proxy_password_value, 1, wx.EXPAND),
+             # (wx.StaticText(self), wx.EXPAND), (self.proxy_password_show_checkbox, 1, wx.EXPAND)
+            ]
+        )
+
+        fgs.AddGrowableCol(1, 1)
+
+        hbox_main.Add(fgs, 2, wx.EXPAND | wx.ALL, 20)
+        self.SetSizer(hbox_main)
+
+        self.profile_name_value.Disable()
+        self.proxy_server_value.Disable()
+        self.proxy_port_value.Disable()
+        self.proxy_auth_required_chkbox.Disable()
+        self.proxy_username_value.Disable()
+        self.proxy_password_value.Disable()
+        # self.proxy_password_show_checkbox.Disable()
+
+        index=0
+        for profile in sorted(self.profiles, key=lambda profile: self.profiles[profile]['attributes']['index']):
+            #re-sequene the index, as some deletions might have taken place
+            self.profiles[profile]['attributes']['index'] = index
+            index += 1
+
+            self.listbox.Append(profile)
+
+        self.profile_name_value.Bind(wx.EVT_KILL_FOCUS, self.OnDefocus)
+        self.proxy_server_value.Bind(wx.EVT_KILL_FOCUS, self.OnDefocus)
+        self.proxy_port_value.Bind(wx.EVT_KILL_FOCUS, self.OnDefocus)
+        self.proxy_auth_required_chkbox.Bind(wx.EVT_KILL_FOCUS, self.OnDefocus)
+        self.proxy_auth_required_chkbox.Bind(wx.EVT_CHECKBOX, self.ToggleAuthRequired)
+        self.proxy_username_value.Bind(wx.EVT_KILL_FOCUS, self.OnDefocus)
+        self.proxy_password_value.Bind(wx.EVT_KILL_FOCUS, self.OnDefocus)
+        # self.proxy_password_show_checkbox.Bind(wx.EVT_CHECKBOX, self.TogglePassword)
+
+
+    def NewItem(self, event):
+        old_profiles = self.listbox.GetStrings()
+        new_profile_id = 1
+        new_profile_name = "Profile #" + str(new_profile_id)
+
+        while new_profile_name in old_profiles:
+            new_profile_id += 1
+            new_profile_name = "Profile #" + str(new_profile_id)
+
+        max_index = -1
+        for profile in old_profiles:
+            max_index = max(max_index, self.profiles[profile]['attributes']['index'])
+
+        #print max_index
+        password = ""
+        attributes = {
+            'index': max_index+1,
+            'server': "",
+            'auth_required': 1,
+            'port': 0L,
+            'user': ""
+        }
+
+        gk.item_create_sync(self.keyring_name, gk.ITEM_NETWORK_PASSWORD, new_profile_name, attributes, password, True)
+        self.GetSettingsFromKeyring()
+        self.listbox.Append(new_profile_name)
+        self.listbox.SetSelection(self.listbox.GetCount()-1)
+        self.OnProfileSelect(None)
+
+    def OnDefocus(self, event):
+        sel = self.listbox.GetSelection()
+        if sel >= 0:
+            #Update value
+            value_id = event.GetId()
+            profile_selected = self.listbox.GetString(sel)
+
+            if value_id == ID_DISPLAY_NAME:
+                renamed = self.profile_name_value.GetValue()
+                if renamed != '' and renamed not in self.listbox.GetStrings():
+                    self.profiles[renamed] = self.profiles.pop(profile_selected)
+
+                    #Update gnome-keyring
+                    info = gk.item_get_info_sync(self.keyring_name, self.profiles[renamed]['id'])
+                    info.set_display_name(renamed)
+                    gk.item_set_info_sync(self.keyring_name,  self.profiles[renamed]['id'], info)
+                    gk.item_set_attributes_sync(self.keyring_name, self.profiles[renamed]['id'], self.profiles[renamed]['attributes'])
+
+
+                    #update listBox
+                    self.listbox.Delete(sel)
+                    self.listbox.Insert(renamed, sel)
+
+                    self.listbox.SetSelection(sel)
+
+            elif value_id == ID_SERVER:
+                server = self.proxy_server_value.GetValue()
+                if server != '':
+                    self.profiles[profile_selected]['attributes']['server'] = server.encode('ascii', 'ignore')
+                    gk.item_set_attributes_sync(self.keyring_name, self.profiles[profile_selected]['id'], self.profiles[profile_selected]['attributes'])
+
+            elif value_id == ID_PORT:
+                port = int(self.proxy_port_value.GetValue())
+                if port != '':
+                    self.profiles[profile_selected]['attributes']['port'] = port
+                    gk.item_set_attributes_sync(self.keyring_name, self.profiles[profile_selected]['id'], self.profiles[profile_selected]['attributes'])
+
+            elif value_id == ID_AUTH_REQD:
+                auth_required = int(self.proxy_auth_required_chkbox.GetValue())
+                self.profiles[profile_selected]['attributes']['auth_required'] = auth_required
+                gk.item_set_attributes_sync(self.keyring_name, self.profiles[profile_selected]['id'], self.profiles[profile_selected]['attributes'])
+                print "auth_reqd", auth_required
+
+
+            elif value_id == ID_USER:
+                user = self.proxy_username_value.GetValue()
+                # if user != '':
+                self.profiles[profile_selected]['attributes']['user'] = user.encode('ascii', 'ignore')
+                gk.item_set_attributes_sync(self.keyring_name, self.profiles[profile_selected]['id'], self.profiles[profile_selected]['attributes'])
+
+            elif value_id == ID_SECRET:
+                password = self.proxy_password_value.GetValue()
+                # if password != '':
+                self.profiles[profile_selected]['secret'] = password.encode('ascii', 'ignore')
+                info = gk.item_get_info_sync(self.keyring_name, self.profiles[profile_selected]['id'])
+                info.set_secret(password)
+                gk.item_set_info_sync(self.keyring_name,  self.profiles[profile_selected]['id'], info)
+                gk.item_set_attributes_sync(self.keyring_name, self.profiles[profile_selected]['id'], self.profiles[profile_selected]['attributes'])
+
+        self.OnProfileSelect(None)
+
+    def OnDelete(self, event):
+        sel = self.listbox.GetSelection()
+        if sel >= 0:
+            profile_selected = self.listbox.GetString(sel)
+            gk.item_delete_sync(self.keyring_name, self.profiles[profile_selected]['id'])
+            self.listbox.Delete(sel)
+
+            if sel < self.listbox.GetCount():
+                self.listbox.SetSelection(sel)
+            elif sel == self.listbox.GetCount():
+                self.listbox.SetSelection(sel-1)
+            self.OnProfileSelect(None)
+
+    def OnMoveUp(self, event):
+        sel = self.listbox.GetSelection()
+        if sel > 0:
+            #Exchange index
+            profile_selected = self.listbox.GetString(sel)
+            index_selected = self.profiles[profile_selected]['attributes']['index']
+
+            profile_other = self.listbox.GetString(sel-1)
+            index_other = self.profiles[profile_other]['attributes']['index']
+
+            self.profiles[profile_selected]['attributes']['index'] = index_other
+            self.profiles[profile_other]['attributes']['index'] = index_selected
+
+            #Update in gnome-keyring
+            gk.item_set_attributes_sync( self.keyring_name, self.profiles[profile_selected]['id'], self.profiles[profile_selected]['attributes'])
+            gk.item_set_attributes_sync( self.keyring_name, self.profiles[profile_other]['id'], self.profiles[profile_other]['attributes'])
+
+
+            #Update in listBox
+            self.listbox.Delete(sel)
+            self.listbox.Insert(profile_selected, sel-1)
+            self.listbox.SetSelection(sel-1)
+
+
+            self.OnProfileSelect(None)
+
+    def OnMoveDown(self, event):
+        sel = self.listbox.GetSelection()
+        if sel < self.listbox.GetCount() - 1:
+            #Exchange index
+            profile_selected = self.listbox.GetString(sel)
+            index_selected = self.profiles[profile_selected]['attributes']['index']
+
+            profile_other = self.listbox.GetString(sel+1)
+            index_other = self.profiles[profile_other]['attributes']['index']
+
+            self.profiles[profile_selected]['attributes']['index'] = index_other
+            self.profiles[profile_other]['attributes']['index'] = index_selected
+
+            #Update in gnome-keyring
+            gk.item_set_attributes_sync( self.keyring_name, self.profiles[profile_selected]['id'], self.profiles[profile_selected]['attributes'])
+            gk.item_set_attributes_sync( self.keyring_name, self.profiles[profile_other]['id'], self.profiles[profile_other]['attributes'])
+
+            #Shift in listBox
+            self.listbox.Delete(sel)
+            self.listbox.Insert(profile_selected, sel+1)
+            self.listbox.SetSelection(sel+1)
+            self.OnProfileSelect(None)
+
+    def OnProfileSelect(self, event):
+        sel = self.listbox.GetSelection()
+        if sel >= 0:
+            profile_name = self.listbox.GetString(sel)
+            self.profile_name_value.SetValue(profile_name)
+            self.proxy_server_value.SetValue(self.profiles[profile_name]['attributes']['server'])
+            self.proxy_port_value.SetValue(str(self.profiles[profile_name]['attributes']['port']))
+            self.proxy_auth_required_chkbox.SetValue(self.profiles[profile_name]['attributes']['auth_required'])
+            self.proxy_username_value.SetValue(self.profiles[profile_name]['attributes']['user'])
+            self.proxy_password_value.SetValue(self.profiles[profile_name]['secret'])
+            self.proxy_password_value.SetWindowStyle(wx.TE_PASSWORD)
+            # self.proxy_password_show_checkbox.SetValue(False)
+
+            self.profile_name_value.Enable()
+            self.proxy_server_value.Enable()
+            self.proxy_port_value.Enable()
+            self.proxy_auth_required_chkbox.Enable()
+
+            if self.proxy_auth_required_chkbox.IsChecked():
+                self.proxy_username_value.Enable()
+                self.proxy_password_value.Enable()
+            else:
+                self.proxy_username_value.Disable()
+                self.proxy_password_value.Disable()
+
+            # self.proxy_password_show_checkbox.Enable()
+
+
+        else:
+            self.profile_name_value.SetValue("")
+            self.proxy_server_value.SetValue("")
+            self.proxy_port_value.SetValue("")
+            self.proxy_auth_required_chkbox.SetValue(False)
+            self.proxy_username_value.SetValue("")
+            self.proxy_password_value.SetValue("")
+            self.proxy_password_value.SetWindowStyle(wx.TE_PASSWORD)
+            # self.proxy_password_show_checkbox.SetValue(False)
+
+            self.profile_name_value.Disable()
+            self.proxy_server_value.Disable()
+            self.proxy_port_value.Disable()
+            self.proxy_auth_required_chkbox.Disable()
+            self.proxy_username_value.Disable()
+            self.proxy_password_value.Disable()
+            # self.proxy_password_show_checkbox.Disable()
+
+    # def TogglePassword(self, event):
+    #     if self.proxy_password_show_checkbox.IsChecked():
+    #         self.proxy_password_value.SetWindowStyle(wx.NORMAL)
+    #     else:
+    #         self.proxy_password_value.SetWindowStyle(wx.TE_PASSWORD)
+
+
+    def ToggleAuthRequired(self, event):
+        if self.proxy_auth_required_chkbox.IsChecked():
+            self.proxy_username_value.Enable()
+            self.proxy_password_value.Enable()
+        else:
+            self.proxy_username_value.Disable()
+            self.proxy_password_value.Disable()
+
+        
+class IgnoredHosts(wx.Panel):
+    def __init__(self, parent):
+        wx.Panel.__init__(self, parent)
+        self.db = ProxywiseDB()
+        self.InitUI()
+
+    def InitUI(self):
+        hbox = wx.BoxSizer(wx.HORIZONTAL)
+
+        self.listbox = wx.ListBox(self, -1)
+        ignore_host_sample_list = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
+        self.new_ignore_host = wx.ComboBox(self, pos=(150, 90), size=(95, -1), choices=ignore_host_sample_list, style=wx.CB_DROPDOWN)
+
+        vbox_l = wx.BoxSizer(wx.VERTICAL)
+        vbox_l.Add(self.new_ignore_host, 0, wx.EXPAND | wx.RIGHT)
+        vbox_l.Add(self.listbox, 1, wx.EXPAND | wx.ALL)
+
+        hbox.Add(vbox_l, 1, wx.EXPAND | wx.ALL, 20)
+
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        self.add_host = wx.Button(self, label='&Add')
+        self.add_host.SetDefault()
+
+        self.remove_host = wx.Button(self, label='&Remove')
+        self.remove_host.Disable()
+
+        self.add_host.Bind(wx.EVT_BUTTON, self.onAddHost)
+        self.remove_host.Bind(wx.EVT_BUTTON, self.OnRemoveHost)
+        self.listbox.Bind(wx.EVT_LISTBOX, self.OnHostSelect)
+
+        vbox.Add((-1, 20))
+        vbox.Add(self.add_host)
+        vbox.Add(self.remove_host, 0, wx.TOP, 5)
+
+        hbox.Add(vbox, 0,  wx.RIGHT, 20)
+        self.SetSizer(hbox)
+
+        for host in self.db.GetPersistentIgnoreHostList():
+            self.listbox.Append(host)
+
+        for host in self.db.GetIgnoreHostList():
+            self.listbox.Append(host)
+
+
+    def onAddHost(self, event):
+        ignore_host = self.new_ignore_host.GetValue()
+        if ignore_host != '' and self.listbox.FindString(ignore_host) == -1:
+            self.db.AddIgnoreHost(ignore_host)
+            self.listbox.Append(ignore_host)
+            self.listbox.SetSelection(self.listbox.GetCount()-1)
+            self.new_ignore_host.SetValue("")
+            self.OnHostSelect(None)
+
+    def OnHostSelect(self, event):
+        sel = self.listbox.GetSelection()
+        if sel >= 0 and self.listbox.GetString(sel) not in self.db.GetPersistentIgnoreHostList():
+            self.remove_host.Enable()
+        else:
+            self.remove_host.Disable()
+
+    def OnRemoveHost(self, event):
+        sel = self.listbox.GetSelection()
+        if sel >=0:
+            ignore_host = self.listbox.GetString(sel)
+            if ignore_host not in self.db.GetPersistentIgnoreHostList():
+                self.db.RemoveIgnoreHost(ignore_host)
+
+                self.listbox.Delete(sel)
+                if sel < self.listbox.GetCount():
+                    self.listbox.SetSelection(sel)
+                elif sel == self.listbox.GetCount():
+                    self.listbox.SetSelection(sel-1)
+                self.OnHostSelect(None)
+
+
+if __name__ == '__main__':
+    if not gk.is_available():
+        print 'Gnome Keyring is unavailable!'
+        exit()
+
+    app = wx.App(False)
+    frame = wx.Frame(None, title="Proxywise Configuration Tool", size=(710,470))
+    frame.Centre()
+    nb = wx.Notebook(frame)
+
+    nb.AddPage(Profiles(nb), "Profiles")
+    nb.AddPage(IgnoredHosts(nb), "Ignored Hosts")
+
+    frame.Show()
+    app.MainLoop()

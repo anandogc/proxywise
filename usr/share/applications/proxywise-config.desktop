@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Proxywise Configuration Tool
+GenericName=Proxywise Config
+Comment=Redirects all your traffic through a given proxy
+Exec=proxywise-config
+Terminal=false
+Type=Application
+Icon=proxify-profile
+Categories=Network;
+StartupNotify=false
+Name[en_IN]=Proxywise Configuration Tool

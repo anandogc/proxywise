@@ -1,0 +1,392 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+
+# Copyright 2015 Anando Gopal Chatterjee <anandogc@gmail.com>
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+
+import dbus, sys
+import json, socket
+
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import Gtk, GObject, Notify, AppIndicator3 as appindicator
+
+from subprocess import Popen
+from proxywisedb import ProxywiseDB
+
+
+class ProxywiseGtk:
+    def __init__(self):
+        # create a menu
+        Notify.init ('Application')
+
+        self.menu = Gtk.Menu()
+        self.mainloop = GObject.MainLoop()
+        self.selected_profile = None
+        self.db = ProxywiseDB()
+
+        self.ubuntu_version = None   # DBus API is a bit different for Ubuntu 12.04 and 14.04
+
+        self.ind = appindicator.Indicator.new (
+                                        "proxywise-gtk",
+                                        "proxywise-none",
+                                        appindicator.IndicatorCategory.COMMUNICATIONS)
+        self.ind.set_status (appindicator.IndicatorStatus.ACTIVE)
+        self.ind.set_attention_icon ("proxywise-profile")
+
+        self.InitProfiles()
+
+        if self.get_active_profile() is not None:   # Proxy is already set by proxywise-service
+            self.selected_profile = self.get_active_profile()
+        elif self.db.GetActiveProfile() is not None:    # Proxy was activated in earlier booting
+            self.selected_profile = self.db.GetActiveProfile()
+            self.activate_profile(self.selected_profile)
+
+
+        if self.selected_profile is not None:
+            self.ind.set_icon("proxywise-profile")
+
+        sep = Gtk.SeparatorMenuItem()
+        self.menu.append(sep)
+        sep.show()
+
+        sep = Gtk.SeparatorMenuItem()
+        self.menu.append(sep)
+        sep.show()
+
+        menu_item = Gtk.MenuItem("Configure")
+        self.menu.append(menu_item)
+        menu_item.connect("activate", self.Configure)
+        menu_item.show()
+
+        sep = Gtk.SeparatorMenuItem()
+        self.menu.append(sep)
+        sep.show()
+
+        menu_item = Gtk.MenuItem("Quit")
+        self.menu.append(menu_item)
+        menu_item.connect("activate", self.quit)
+        menu_item.show()
+
+        self.profile_menu_list = []
+
+        self.ind.set_menu(self.menu)
+
+        DBusGMainLoop(set_as_default=True)
+        self.bus = dbus.SessionBus()
+
+        self.get_my_id()
+
+        if self.ubuntu_version == "14.04":
+            #Call self.activate14 and prepare the menu when menu is activated
+            self.bus.add_signal_receiver(self.activate14,
+                                            dbus_interface="com.canonical.Unity.Panel.Service",
+                                            signal_name="EntryActivated")
+
+        elif self.ubuntu_version == "12.04":
+            #Call self.activate12 and prepare the menu when menu is activated
+            self.bus.add_signal_receiver(self.activate12,
+                                            dbus_interface="com.canonical.Unity.Panel.Service",
+                                            signal_name="EntryActivated")
+
+
+        #Call self.activate and prepare the menu when menu is activated
+        self.bus.add_signal_receiver(self.state_changed,
+                                        dbus_interface="org.freedesktop.NetworkManager",
+                                        signal_name="StateChanged")
+
+
+        self.mainloop.run()
+
+
+    def Configure(self, w):
+        Popen(["proxywise-config"])
+
+ 
+    def InitProfiles(self):
+        self.profiles = {}
+        profile_id_list = self.db.GetProfileIdList()
+
+        for profile_id in profile_id_list:
+                display_name = self.db.GetDisplayName(profile_id)
+
+                self.profiles[display_name] = {
+                                                'id': profile_id,
+                                                'attributes': self.db.GetAttributes(profile_id)
+                                        }
+
+
+    def PutProfilesIntoMenu(self):
+        #Sort profile names according to the order set by proxywise-configure.
+        #The order index is set in self.profiles[profile]['attributes']['index']
+
+        self.profile_name_list = sorted(self.profiles, key=lambda profile: self.profiles[profile]['attributes']['index'])
+
+        if len(self.profile_menu_list) > 0:
+                for menu_entry in self.profile_menu_list:
+                        self.menu.remove(menu_entry)
+                self.profile_menu_list = []
+
+        group = Gtk.RadioMenuItem(None)
+
+        self.profile_name_list.append("None")
+        self.profile_name_list.reverse()
+        for profile_name in self.profile_name_list:
+                menu_item = Gtk.RadioMenuItem(profile_name, group=group)
+
+                if profile_name != "None":
+                    if self.profiles[profile_name]['id'] == self.selected_profile:
+                            menu_item.set_active(True)
+                            self.ind.set_icon("proxywise-profile")
+                    self.menu.insert(menu_item,2)
+
+                    #Upon activation of this profile, call self.set_profile with following arguments
+                    menu_item.connect("activate", self.set_profile, menu_item, self.profiles[profile_name]['id'])
+
+                else:
+                    if self.selected_profile == None :
+                            menu_item.set_active(True)
+                            self.ind.set_icon("proxywise-none")
+                    self.menu.insert(menu_item,0)
+
+                    #Upon activation of this profile, call self.disable_profile with following arguments
+                    menu_item.connect("activate", self.disable_profile, menu_item)
+
+                menu_item.show()
+                self.profile_menu_list.append(menu_item)
+        self.profile_name_list.reverse()
+
+
+    def state_changed(self, state_id):
+        print state_id
+
+
+    def activate14(self, panel_id, menu_id, geometry):
+        if (menu_id == self.get_my_id()):
+            self.selected_profile = self.get_active_profile()
+            self.InitProfiles()
+            self.PutProfilesIntoMenu()
+
+
+    def activate12(self, menu_id, geometry):
+        self.activate14(-1, menu_id, geometry)
+
+
+    def get_active_profile(self):
+        SO_PASSCRED = 16 # Pulled from /usr/include/asm-generic/socket.h
+
+        #create an UNIX, STREAMing socket
+        try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        except socket.error:
+            print 'Failed to create socket'
+            notification = Notify.Notification.new('Proxywise', 'Failed to create socket', 'proxywise-error')
+            notification.show ()
+            return None
+
+        s.setsockopt(socket.SOL_SOCKET, SO_PASSCRED, 1)
+
+
+        #Connect to central server
+        try:
+                s.connect('/run/proxywise.sock')
+        except:
+            print "Unable to connect with proxywise service."
+            notification = Notify.Notification.new('Proxywise', 'Unable to connect with proxywise service.', 'proxywise-error')
+            notification.show ()
+            return None
+
+        #Create message
+        message = json.dumps(['get_active_profile'])
+
+
+        profile_id = None;
+        #Send message to central cerver
+        try :
+                s.sendall(message)
+                profile_id=int(s.recv(1024))
+        except socket.error:  #Send failed
+            print 'Sending profile information to proxywise service failed.'
+            notification = Notify.Notification.new('Proxywise', 'Unable to request proxywise service to fetch active profile.', 'proxywise-error')
+            notification.show ()
+            return None
+
+        s.close()
+
+        if profile_id<0:
+            profile_id=None
+
+        return profile_id
+
+
+    def get_my_id(self):
+
+        try:
+            # Works in Ubuntu 14.04
+            queueservice = self.bus.get_object('com.canonical.Unity.Panel.Service.Desktop', '/com/canonical/Unity/Panel/Service')
+            self.ubuntu_version = "14.04"
+
+        except dbus.exceptions.DBusException:
+            # Works in Ubuntu 12.04
+            queueservice = self.bus.get_object('com.canonical.Unity.Panel.Service', '/com/canonical/Unity/Panel/Service')
+            self.ubuntu_version = "12.04"
+
+        sync = queueservice.get_dbus_method('Sync', 'com.canonical.Unity.Panel.Service')
+
+        indicator_list = sync()
+
+        for indicator in indicator_list:
+                if indicator[2] == 'proxywise-gtk':
+                        return indicator[1]
+
+        return -1
+
+
+    def set_profile(self, w, menu_item, profile_id):
+        if menu_item.get_active():
+            self.activate_profile(profile_id)
+        else:
+            self.selected_profile = None
+
+
+    def activate_profile(self, profile_id):
+
+        attr = self.db.GetAttributes(profile_id)
+
+        if not attr['server'] or not attr['port']:
+            print "Server address or Port not present in configuration."
+            self.ind.set_icon("proxywise-none")
+            notification = Notify.Notification.new('Proxywise', 'Server address or Port not present in configuration.', 'proxywise-error')
+            notification.show()
+            return 3
+
+        if attr['auth_required'] and (not attr['user'] or not self.db.GetSecret(profile_id)):
+            Popen(["gnome-terminal", "--hide-menubar", "--title", "Proxywise: %s" % (attr['name']), "-e", "bash -c ' proxywise %s'" % (attr['name'])]).wait()
+
+            return 0
+
+        SO_PASSCRED = 16 # Pulled from /usr/include/asm-generic/socket.h
+                         # http://stackoverflow.com/a/7982749
+
+        #create an UNIX, STREAMing socket
+        try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        except socket.error:
+            print 'Failed to create socket'
+            self.selected_profile = None
+            self.ind.set_icon("proxywise-none")
+            notification = Notify.Notification.new('Proxywise', 'Failed to create socket', 'proxywise-error')
+            notification.show ()
+            return 1
+
+        s.setsockopt(socket.SOL_SOCKET, SO_PASSCRED, 1)
+
+
+        #Connect to central server
+        try:
+                s.connect('/run/proxywise.sock')
+        except:
+            print "Unable to connect with proxywise service."
+            self.selected_profile = None
+            self.ind.set_icon("proxywise-none")
+            notification = Notify.Notification.new('Proxywise', 'Unable to connect with proxywise service.', 'proxywise-error')
+            notification.show ()
+            return 2
+
+        #Create message
+        message = json.dumps(['apply', {
+            'profile_id': profile_id,
+            'ip': attr['server'],
+            'port': attr['port'],
+            'auth_required': attr['auth_required'],
+            'login': attr['user'],
+            'password': self.db.GetSecret(profile_id),
+            'ignore-host': self.db.GetIgnoreHostList()
+                                }
+                            ])
+
+        #Send message to central cerver
+        try :
+                s.sendall(message)
+                error=int(s.recv(1024))
+        except socket.error:  #Send failed
+            print 'Sending profile information to proxywise service failed.'
+            self.selected_profile = None
+            self.ind.set_icon("proxywise-none")
+            notification = Notify.Notification.new('Proxywise', 'Sending profile information to proxywise service failed.', 'proxywise-error')
+            notification.show ()
+            return 3
+
+
+
+        s.close()
+
+        if (error==0):
+            self.selected_profile = profile_id
+            self.ind.set_icon("proxywise-profile")
+            self.db.SetActiveProfile(profile_id)
+        else:
+            print 'Proxywise service failed to apply given proxy'
+            self.selected_profile = None
+            self.ind.set_icon("proxywise-none")
+            notification = Notify.Notification.new('Proxywise', 'Proxywise service failed to apply given proxy', 'proxywise-error')
+            notification.show ()
+            return 1
+
+        return 0
+
+
+    def disable_profile(self, w, menu_item):
+        if menu_item.get_active():
+            SO_PASSCRED = 16 # Pulled from /usr/include/asm-generic/socket.h
+
+            #create an UNIX, STREAMing socket
+            try:
+                    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            except socket.error:
+                print 'Failed to create socket'
+                notification = Notify.Notification.new('Proxywise', 'Failed to create socket', 'proxywise-error')
+                notification.show ()
+
+            s.setsockopt(socket.SOL_SOCKET, SO_PASSCRED, 1)
+
+
+            #Connect to central server
+            try:
+                    s.connect('/run/proxywise.sock')
+            except:
+                print "Unable to connect with proxywise service."
+                notification = Notify.Notification.new('Proxywise', 'Unable to connect with proxywise service.', 'proxywise-error')
+                notification.show ()
+
+            #Create message
+            message = json.dumps(['reset'])
+
+
+            #Send message to central cerver
+            try :
+                    s.sendall(message)
+                    self.selected_profile = None
+                    self.ind.set_icon("proxywise-none")
+                    self.db.SetActiveProfile(None)
+            except socket.error:
+                print 'Sending reset proxywise service failed.'
+                notification = Notify.Notification.new('Proxywise', 'Sending reset proxywise service failed.', 'proxywise-error')
+                notification.show ()
+            s.close()
+
+
+    def quit(self, w):
+     self.mainloop.quit()
+
+proxywisegtk = ProxywiseGtk()

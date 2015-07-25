@@ -1,0 +1,97 @@
+proxywise (1.1.1) trusty; urgency=low
+
+  * icons added for hicolor
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 25 Jul 2015 17:29:55 +0530
+
+proxywise (1.1.0) trusty; urgency=low
+
+  * Ask for credentials if not provided.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 18 Jul 2015 17:44:12 +0530
+
+proxywise (1.0.13) trusty; urgency=low
+
+  * Bug fix.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 17 Jul 2015 17:10:24 +0530
+
+proxywise (1.0.12) trusty; urgency=low
+
+  * Trusty and precise code merged.
+  * Private network Subnet Masks are pre fed
+  * Compatible with both upstart and systemd
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 17 Jul 2015 13:10:24 +0530
+
+proxywise (1.0.11) trusty; urgency=low
+
+  * get_my_id fixed.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 15 Jul 2015 20:00:10 +0530
+
+proxywise (1.0.10) trusty; urgency=low
+
+  * Icons changed.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 15 Jul 2015 10:05:15 +0530
+
+proxywise (1.0.9) trusty; urgency=low
+
+  * Bash completion added.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 14 Jul 2015 22:28:52 +0530
+
+proxywise (1.0.8) trusty; urgency=low
+
+  * Bug fix.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 13 Jul 2015 17:33:52 +0530
+
+proxywise (1.0.7) trusty; urgency=low
+
+  * Bug fix.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 13 Jul 2015 17:13:52 +0530
+
+proxywise (1.0.6) trusty; urgency=low
+
+  * Bug fix.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 13 Jul 2015 16:57:52 +0530
+
+proxywise (1.0.5) trusty; urgency=low
+
+  * Bug fix.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 12 Jul 2015 21:37:52 +0530
+
+proxywise (1.0.4) trusty; urgency=low
+
+  * 'Proxy requires authentication' option added.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 12 Jul 2015 21:37:52 +0530
+
+proxywise (1.0.3) trusty; urgency=low
+
+  * Bug fix.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 12 Jul 2015 21:37:52 +0530
+
+proxywise (1.0.2) trusty; urgency=low
+
+  * Bug fix.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 12 Jul 2015 20:03:52 +0530
+
+proxywise (1.0.1) trusty; urgency=low
+
+  * Bug fix.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 12 Jul 2015 19:57:52 +0530
+
+proxywise (1.0.0) trusty; urgency=low
+
+  * Initial Release.
+
+ -- Anando Gopal Chatterjee <anandogc@gmail.com>  Sun, 12 Jul 2015 12:02:52 +0530
