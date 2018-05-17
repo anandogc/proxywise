@@ -2,7 +2,7 @@
 Description=Proxywise
 
 [Service]
-ExecStart=proxywise-service
+ExecStart=/usr/bin/proxywise-service
 
 [Install]
 WantedBy=multi-user.target
